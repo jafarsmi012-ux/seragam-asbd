@@ -55,3 +55,24 @@ server.log
 
 # Skills directory
 /skills/
+# ── Legacy / non-runtime files (excluded dari repo) ──
+/.zscripts/
+/db/
+/download/
+/examples/
+/mini-services/
+/prisma/
+Caddyfile
+bun.lock
+open-next.config.ts
+wrangler.toml
+worklog.md
+
+# Standalone build output
+/.next/standalone/
+
+# Debug endpoint (production)
+/src/app/api/debug/
+
+# Legacy Prisma client (orphan, tidak dipakai runtime)
+/src/lib/db.ts
