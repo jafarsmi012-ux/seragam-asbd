@@ -1,5 +1,35 @@
 import { NextResponse } from 'next/server';
+import crypto from 'crypto';
 import { isSupabaseConfigured, getAdminClient } from '@/lib/supabase';
+
+// ── Auth: signed-cookie session ──
+
+const COOKIE_NAME = 'admin_session';
+
+function verifySession(request: Request): boolean {
+  const secret = process.env.ADMIN_PASSWORD;
+  if (!secret || secret === 'admin123') return false;
+
+  const cookieHeader = request.headers.get('cookie') || '';
+  const match = cookieHeader
+    .split(';')
+    .map((c) => c.trim())
+    .find((c) => c.startsWith(`${COOKIE_NAME}=`));
+  if (!match) return false;
+
+  const value = decodeURIComponent(match.slice(COOKIE_NAME.length + 1));
+  const expected = crypto
+    .createHmac('sha256', secret)
+    .update('v1')
+    .digest('hex');
+
+  if (value.length !== expected.length) return false;
+  try {
+    return crypto.timingSafeEqual(Buffer.from(value), Buffer.from(expected));
+  } catch {
+    return false;
+  }
+}
 
 // ── In-memory fallback ──
 
@@ -58,7 +88,11 @@ function mapDbRow(row: Record<string, unknown>) {
 
 // ── GET /api/admin/orders ──
 
-export async function GET() {
+export async function GET(request: Request) {
+  if (!verifySession(request)) {
+    return NextResponse.json({ error: 'Tidak terautentikasi' }, { status: 401 });
+  }
+
   try {
     if (isSupabaseConfigured) {
       const admin = getAdminClient();
@@ -101,6 +135,10 @@ export async function GET() {
 // ── PATCH /api/admin/orders ──
 
 export async function PATCH(request: Request) {
+  if (!verifySession(request)) {
+    return NextResponse.json({ error: 'Tidak terautentikasi' }, { status: 401 });
+  }
+
   try {
     const body = await request.json();
     const { orderId, status } = body;

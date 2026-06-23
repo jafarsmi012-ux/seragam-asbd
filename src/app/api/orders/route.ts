@@ -72,6 +72,42 @@ export async function POST(request: Request) {
       }
     }
 
+    // ── Server-side validation: bukti transfer ──
+    // Limit di bawah Vercel function body limit (4.5 MB untuk JSON).
+    // Base64 file = file * 4/3, jadi maxForType 3MB → base64 ~4MB ✅.
+    const MAX_IMAGE_BYTES = 3 * 1024 * 1024;   // 3 MB untuk JPG/PNG (sudah di-resize di client)
+    const MAX_PDF_BYTES = 3 * 1024 * 1024;     // 3 MB untuk PDF
+    const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'application/pdf']);
+    const ALLOWED_EXT = new Set(['jpg', 'jpeg', 'png', 'pdf']);
+
+    let proofDataUrl = '';
+    let proofMime = '';
+    if (typeof body.proofUrl === 'string' && body.proofUrl.startsWith('data:')) {
+      proofDataUrl = body.proofUrl;
+      const headerMatch = /^data:([^;]+);base64,/.exec(proofDataUrl);
+      proofMime = headerMatch?.[1]?.toLowerCase() || '';
+    }
+
+    if (proofDataUrl) {
+      if (!ALLOWED_MIME.has(proofMime)) {
+        return NextResponse.json(
+          { error: 'Format bukti transfer tidak didukung. Gunakan JPG, PNG, atau PDF.' },
+          { status: 400 }
+        );
+      }
+      // Estimasi ukuran dari panjang base64 (4 char base64 ≈ 3 byte).
+      const base64Part = proofDataUrl.split(',')[1] || '';
+      const approxBytes = Math.floor((base64Part.length * 3) / 4);
+      const maxForType = proofMime === 'application/pdf' ? MAX_PDF_BYTES : MAX_IMAGE_BYTES;
+      if (approxBytes > maxForType) {
+        const limit = proofMime === 'application/pdf' ? '3MB' : '3MB';
+        return NextResponse.json(
+          { error: `Ukuran bukti transfer melebihi batas ${limit}. Coba kompres atau crop ulang.` },
+          { status: 413 }
+        );
+      }
+    }
+
     // ── Supabase mode ──
     if (isSupabaseConfigured) {
       const admin = getAdminClient();
@@ -86,18 +122,33 @@ export async function POST(request: Request) {
       let proofUrl = '';
       let proofFileName = '';
 
-      if (body.proofUrl && body.proofUrl.startsWith('data:')) {
+      if (proofDataUrl) {
         const fileExt = (() => {
-          const mime = body.proofUrl.split(';')[0]?.split(':')[1] || 'image/png';
-          if (mime.includes('jpeg') || mime.includes('jpg')) return 'jpg';
-          if (mime.includes('png')) return 'png';
-          if (mime.includes('pdf')) return 'pdf';
+          if (proofMime.includes('jpeg') || proofMime.includes('jpg')) return 'jpg';
+          if (proofMime.includes('png')) return 'png';
+          if (proofMime.includes('pdf')) return 'pdf';
           return 'jpg';
         })();
 
-        proofFileName = `${body.studentName.replace(/\s+/g, '_')}_${Date.now()}.${fileExt}`;
-        const base64Data = body.proofUrl.replace(/^data:[^;]+;base64,/, '');
+        if (!ALLOWED_EXT.has(fileExt)) {
+          return NextResponse.json(
+            { error: 'Ekstensi bukti transfer tidak valid.' },
+            { status: 400 }
+          );
+        }
+
+        proofFileName = `${String(body.studentName || 'unknown').replace(/[^a-zA-Z0-9_-]/g, '_')}_${Date.now()}.${fileExt}`;
+        const base64Data = proofDataUrl.replace(/^data:[^;]+;base64,/, '');
         const buffer = Buffer.from(base64Data, 'base64');
+
+        const maxForType = fileExt === 'pdf' ? MAX_PDF_BYTES : MAX_IMAGE_BYTES;
+        if (buffer.byteLength > maxForType) {
+          const limit = fileExt === 'pdf' ? '3MB' : '3MB';
+          return NextResponse.json(
+            { error: `Ukuran bukti transfer melebihi batas ${limit}.` },
+            { status: 413 }
+          );
+        }
 
         const { error: uploadError } = await admin.storage
           .from('payment-proofs')
@@ -163,8 +214,9 @@ export async function POST(request: Request) {
         );
       }
 
-      // Fire Telegram notification
-      sendTelegramNotification({
+      // Fire Telegram notification (awaited — Vercel serverless kills
+      // fire-and-forget fetches after response is returned)
+      await sendTelegramNotification({
         orderNumber: orderNumber,
         studentName: body.studentName,
         className: body.className,
@@ -222,8 +274,9 @@ export async function POST(request: Request) {
 
     globalThis.__ordersStore.orders.push(order);
 
-    // Fire Telegram notification
-    sendTelegramNotification({
+    // Fire Telegram notification (awaited — Vercel serverless kills
+    // fire-and-forget fetches after response is returned)
+    await sendTelegramNotification({
       orderNumber: order.orderNumber,
       studentName: order.studentName,
       className: order.className,

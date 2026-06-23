@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 
@@ -13,6 +13,13 @@ export const metadata: Metadata = {
     "Summarecon Bandung",
     "pemesanan seragam",
   ],
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 5,
+  themeColor: "#1B3A5C",
 };
 
 export default function RootLayout({

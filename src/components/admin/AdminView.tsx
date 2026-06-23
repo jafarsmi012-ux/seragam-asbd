@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { useAppStore } from '@/lib/store';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -40,6 +41,7 @@ import {
   DollarSign,
   Users,
   FileText,
+  LogOut,
 } from 'lucide-react';
 import { formatRupiah, formatDateTime } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
@@ -101,6 +103,7 @@ function AdminLogin({ onLogin }: { onLogin: () => void }) {
       const res = await fetch('/api/admin/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ password }),
       });
       const data = await res.json();
@@ -108,7 +111,7 @@ function AdminLogin({ onLogin }: { onLogin: () => void }) {
       if (data.success) {
         onLogin();
       } else {
-        setError('Password salah. Silakan coba lagi.');
+        setError(data.error || 'Password salah. Silakan coba lagi.');
       }
     } catch {
       setError('Terjadi kesalahan. Silakan coba lagi.');
@@ -162,7 +165,7 @@ function AdminLogin({ onLogin }: { onLogin: () => void }) {
   );
 }
 
-function AdminDashboard() {
+function AdminDashboard({ onLogout }: { onLogout: () => void }) {
   const [orders, setOrders] = useState<OrderItem[]>([]);
   const [search, setSearch] = useState('');
   const [filterClass, setFilterClass] = useState<string>('all');
@@ -175,9 +178,26 @@ function AdminDashboard() {
   const [proofPreviewUrl, setProofPreviewUrl] = useState<string>('');
   const { toast } = useToast();
 
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/admin/logout', { method: 'POST', credentials: 'include' });
+    } catch {
+      /* diamkan jika gagal */
+    }
+    onLogout();
+  };
+
   const fetchOrders = useCallback(async () => {
     try {
-      const res = await fetch('/api/admin/orders');
+      const res = await fetch('/api/admin/orders', {
+        credentials: 'include',
+      });
+      if (res.status === 401) {
+        // Sesi habis / tidak valid — kembali ke form login
+        setOrders([]);
+        onLogout();
+        return;
+      }
       const data = await res.json();
       if (data.orders) {
         setOrders(data.orders);
@@ -314,9 +334,18 @@ function AdminDashboard() {
           <ArrowLeft className="h-4 w-4 mr-1" />
           Kembali
         </Button>
-        <h1 className="font-heading font-bold text-xl text-navy-800">
+        <h1 className="font-heading font-bold text-xl text-navy-800 flex-1">
           Dashboard Admin
         </h1>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleLogout}
+          className="cursor-pointer border-navy-200 text-navy-600"
+        >
+          <LogOut className="h-4 w-4 mr-1" />
+          Keluar
+        </Button>
       </div>
 
       {/* Stats Cards */}
@@ -610,9 +639,18 @@ function AdminDashboard() {
 }
 
 export function AdminView() {
+  const router = useRouter();
   const adminAuthenticated = useAppStore((s) => s.adminAuthenticated);
   const setAdminAuthenticated = useAppStore((s) => s.setAdminAuthenticated);
   const setView = useAppStore((s) => s.setView);
+
+  const goHome = () => {
+    if (typeof window !== 'undefined' && window.location.pathname.startsWith('/admin')) {
+      router.push('/');
+    } else {
+      setView('landing');
+    }
+  };
 
   if (!adminAuthenticated) {
     return (
@@ -621,7 +659,7 @@ export function AdminView() {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => setView('landing')}
+            onClick={goHome}
             className="cursor-pointer"
           >
             <ArrowLeft className="h-4 w-4 mr-1" />
@@ -635,7 +673,12 @@ export function AdminView() {
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-6">
-      <AdminDashboard />
+      <AdminDashboard
+        onLogout={() => {
+          setAdminAuthenticated(false);
+          goHome();
+        }}
+      />
     </div>
   );
 }
