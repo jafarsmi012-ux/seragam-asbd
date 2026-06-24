@@ -89,6 +89,26 @@ const STATUS_COLORS: Record<OrderStatus, string> = {
   'Selesai': 'bg-gray-100 text-gray-800 border-gray-200',
 };
 
+// Detect proof type from either a base64 data URL or a remote HTTP(S) URL.
+// `proofUrl` from Supabase storage is a public URL ending in .jpg/.png/.pdf
+// (or contains those extensions in the path). Fallback rows that failed upload
+// still hold the original `data:` URL.
+function getProofKind(url: string): 'image' | 'pdf' | 'unknown' {
+  if (!url) return 'unknown';
+
+  if (url.startsWith('data:')) {
+    if (url.startsWith('data:image/')) return 'image';
+    if (url.startsWith('data:application/pdf')) return 'pdf';
+    return 'unknown';
+  }
+
+  const cleanPath = url.split('?')[0].split('#')[0].toLowerCase();
+  if (/\.(jpe?g|png|gif|webp|bmp|svg)$/.test(cleanPath)) return 'image';
+  if (/\.pdf$/.test(cleanPath)) return 'pdf';
+
+  return 'unknown';
+}
+
 function AdminLogin({ onLogin }: { onLogin: () => void }) {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -562,27 +582,11 @@ function AdminDashboard({ onLogout }: { onLogout: () => void }) {
 
       {/* Proof Preview Dialog */}
       <Dialog open={proofPreviewOpen} onOpenChange={setProofPreviewOpen}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="sm:max-w-3xl">
           <DialogHeader>
             <DialogTitle className="font-heading">Bukti Transfer</DialogTitle>
           </DialogHeader>
-          <div className="flex flex-col items-center gap-3">
-            {proofPreviewUrl.startsWith('data:image/') ? (
-              <img
-                src={proofPreviewUrl}
-                alt="Bukti Transfer"
-                className="w-full max-h-[60vh] object-contain rounded-lg border border-gray-200"
-              />
-            ) : proofPreviewUrl.startsWith('data:application/pdf') ? (
-              <div className="w-full text-center p-6 bg-red-50 rounded-lg border border-red-200">
-                <FileText className="h-12 w-12 text-red-500 mx-auto mb-3" />
-                <p className="text-sm text-red-700 font-medium">File PDF</p>
-                <p className="text-xs text-red-600 mt-1">Preview PDF tidak tersedia di browser</p>
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">Format bukti tidak dikenali.</p>
-            )}
-          </div>
+          <ProofPreview url={proofPreviewUrl} />
         </DialogContent>
       </Dialog>
 
@@ -634,6 +638,81 @@ function AdminDashboard({ onLogout }: { onLogout: () => void }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+function ProofPreview({ url }: { url: string }) {
+  if (!url) {
+    return (
+      <p className="text-sm text-muted-foreground">Bukti transfer tidak tersedia.</p>
+    );
+  }
+
+  const kind = getProofKind(url);
+  const isHttp = /^https?:\/\//i.test(url);
+
+  if (kind === 'image') {
+    return (
+      <div className="flex flex-col items-center gap-3 w-full">
+        <img
+          src={url}
+          alt="Bukti Transfer"
+          className="w-full max-h-[70vh] object-contain rounded-lg border border-gray-200 bg-gray-50"
+        />
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-xs text-navy-600 hover:underline"
+        >
+          Buka di tab baru
+        </a>
+      </div>
+    );
+  }
+
+  if (kind === 'pdf') {
+    return (
+      <div className="flex flex-col items-center gap-3 w-full">
+        {isHttp ? (
+          <iframe
+            src={url}
+            title="Bukti Transfer"
+            className="w-full h-[70vh] rounded-lg border border-gray-200 bg-gray-50"
+          />
+        ) : (
+          <div className="w-full text-center p-6 bg-red-50 rounded-lg border border-red-200">
+            <FileText className="h-12 w-12 text-red-500 mx-auto mb-3" />
+            <p className="text-sm text-red-700 font-medium">File PDF</p>
+            <p className="text-xs text-red-600 mt-1">
+              Preview inline tidak tersedia untuk PDF yang disimpan sebagai data URL.
+            </p>
+          </div>
+        )}
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-xs text-navy-600 hover:underline"
+        >
+          Buka PDF di tab baru
+        </a>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col items-center gap-3 w-full">
+      <p className="text-sm text-muted-foreground">Format bukti tidak dikenali.</p>
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-xs text-navy-600 hover:underline break-all"
+      >
+        Coba buka URL secara langsung
+      </a>
     </div>
   );
 }
