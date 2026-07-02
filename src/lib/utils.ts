@@ -21,9 +21,21 @@ export function sanitizeFileName(fileName: string): string {
     .substring(0, 100);
 }
 
-export function generateOrderNumber(existingCount: number): string {
-  const num = String(existingCount + 1).padStart(4, '0');
-  return `ASBD-2026-${num}`;
+export function generateOrderNumber(): string {
+  // Format collision-resistant: timestamp (4 char base36) + random (4 char base36).
+  // Implementasi tunggal ada di /api/orders/route.ts (server-side). Export ini
+  // untuk konsistensi API jika ada kode lain yang ingin membuat preview
+  // nomor order di client. BUKAN sumber kebenaran — server selalu generate ulang.
+  const ts = Math.floor(Date.now() / 1000)
+    .toString(36)
+    .toUpperCase()
+    .padStart(4, '0')
+    .slice(-4);
+  const rand = Math.floor(Math.random() * 36 ** 4)
+    .toString(36)
+    .toUpperCase()
+    .padStart(4, '0');
+  return `ASBD-2026-${ts}${rand}`;
 }
 
 export function formatDate(date: string | Date): string {

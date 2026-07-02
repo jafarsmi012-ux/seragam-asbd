@@ -40,9 +40,29 @@ if (!globalThis.__ordersStore) {
 
 // ── Helpers ──
 
-function generateOrderNumber(existingCount: number): string {
-  const num = existingCount + 1;
-  return `ASBD-2026-${String(num).padStart(4, '0')}`;
+/**
+ * Generate collision-resistant order_number.
+ *
+ * Format: `ASBD-2026-{4 char base36 timestamp}{4 char base36 random}`
+ * Contoh: `ASBD-2026-LM2X-7K3A`
+ *
+ * Collision probability per detik: 1 / 36^4 ≈ 1 / 1.679.616.
+ * Sebelumnya pakai `count + 1` yang rapuh: kalau tabel sudah berisi
+ * rows (test data / row sebelumnya) atau ada race condition antara
+ * SELECT count dan INSERT, hasilnya duplikat → 409 UNIQUE violation
+ * dari Supabase. Lihat commit ini untuk konteks lengkap.
+ */
+function generateOrderNumber(): string {
+  const ts = Math.floor(Date.now() / 1000)
+    .toString(36)
+    .toUpperCase()
+    .padStart(4, '0')
+    .slice(-4);
+  const rand = Math.floor(Math.random() * 36 ** 4)
+    .toString(36)
+    .toUpperCase()
+    .padStart(4, '0');
+  return `ASBD-2026-${ts}${rand}`;
 }
 
 // ── POST /api/orders ──
@@ -170,46 +190,78 @@ export async function POST(request: Request) {
         }
       }
 
-      // Get current order count for numbering
-      const { count } = await admin
-        .from('orders')
-        .select('*', { count: 'exact', head: true });
+      // Insert order to Supabase dengan retry pada unique_violation.
+      // order_number di-generate ulang tiap attempt untuk handle collision
+      // langka (1/1.679.616 per detik, tapi tetap dijaga).
+      const baseOrderData = {
+        student_name: body.studentName,
+        class_name: body.className,
+        parent_name: body.parentName,
+        whatsapp: body.whatsapp,
+        product_type: body.productType,
+        size_asbd: Number(body.sizeAsbd),
+        chest_cm: Number(body.chestCm) || 0,
+        pants_length_cm: Number(body.pantsLengthCm) || 0,
+        pants_waist_cm: Number(body.pantsWaistCm) || 0,
+        unit_price: Number(body.unitPrice) || 0,
+        qty: Number(body.qty),
+        total_price: Number(body.totalPrice),
+        sender_name: body.senderName || '',
+        sender_bank: body.senderBank || '',
+        transfer_date: body.transferDate || null,
+        transfer_amount: Number(body.transferAmount) || 0,
+        proof_url: proofUrl,
+        proof_file_name: proofFileName,
+        status: 'Menunggu Verifikasi',
+        notes: body.notes || '',
+      };
 
-      const orderNumber = generateOrderNumber(count || 0);
+      let inserted: {
+        order_number: string;
+        student_name: string;
+        product_type: string;
+        size_asbd: number;
+        qty: number;
+        total_price: number;
+      } | null = null;
+      let dbError: { code?: string; message?: string } | null = null;
+      let orderNumber = '';
 
-      // Insert order to Supabase
-      const { data: inserted, error: dbError } = await admin
-        .from('orders')
-        .insert({
-          order_number: orderNumber,
-          student_name: body.studentName,
-          class_name: body.className,
-          parent_name: body.parentName,
-          whatsapp: body.whatsapp,
-          product_type: body.productType,
-          size_asbd: Number(body.sizeAsbd),
-          chest_cm: Number(body.chestCm) || 0,
-          pants_length_cm: Number(body.pantsLengthCm) || 0,
-          pants_waist_cm: Number(body.pantsWaistCm) || 0,
-          unit_price: Number(body.unitPrice) || 0,
-          qty: Number(body.qty),
-          total_price: Number(body.totalPrice),
-          sender_name: body.senderName || '',
-          sender_bank: body.senderBank || '',
-          transfer_date: body.transferDate || null,
-          transfer_amount: Number(body.transferAmount) || 0,
-          proof_url: proofUrl,
-          proof_file_name: proofFileName,
-          status: 'Menunggu Verifikasi',
-          notes: body.notes || '',
-        })
-        .select('order_number, student_name, product_type, size_asbd, qty, total_price')
-        .single();
+      for (let attempt = 0; attempt < 5; attempt++) {
+        orderNumber = generateOrderNumber();
+        const result = await admin
+          .from('orders')
+          .insert({ ...baseOrderData, order_number: orderNumber })
+          .select('order_number, student_name, product_type, size_asbd, qty, total_price')
+          .single();
 
-      if (dbError) {
-        console.error('DB insert error:', dbError);
+        if (!result.error && result.data) {
+          inserted = result.data as typeof inserted;
+          dbError = null;
+          break;
+        }
+
+        dbError = result.error as { code?: string; message?: string } | null;
+
+        // Retry hanya pada unique_violation (PostgreSQL code 23505).
+        // Error lain (RLS, kolom hilang, dst.) langsung fail — retry
+        // tidak akan membantu.
+        if (dbError?.code !== '23505') break;
+
+        // Backoff kecil untuk meredakan tabrakan antar-request.
+        await new Promise((r) => setTimeout(r, 10 + Math.random() * 30));
+      }
+
+      if (dbError || !inserted) {
+        console.error(
+          `DB insert error (code=${dbError?.code ?? 'unknown'}):`,
+          dbError?.message ?? 'no data returned'
+        );
         return NextResponse.json(
-          { error: 'Gagal menyimpan pesanan ke database' },
+          {
+            error: 'Gagal menyimpan pesanan ke database',
+            detail: dbError?.message ?? 'Unknown error',
+          },
           { status: 500 }
         );
       }
@@ -245,7 +297,7 @@ export async function POST(request: Request) {
 
     // ── In-memory mode (demo / no Supabase) ──
     globalThis.__ordersStore.counter += 1;
-    const orderNumber = generateOrderNumber(globalThis.__ordersStore.counter - 1);
+    const orderNumber = generateOrderNumber();
 
     const order = {
       id: crypto.randomUUID(),
