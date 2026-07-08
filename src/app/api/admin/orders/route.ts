@@ -5,6 +5,13 @@ import { isSupabaseConfigured, getAdminClient } from '@/lib/supabase';
 // ── Auth: signed-cookie session ──
 
 const COOKIE_NAME = 'admin_session';
+const ALLOWED_STATUSES = new Set([
+  'Menunggu Verifikasi',
+  'Lunas',
+  'Sedang Produksi',
+  'Siap Distribusi',
+  'Selesai',
+]);
 
 function verifySession(request: Request): boolean {
   const secret = process.env.ADMIN_PASSWORD;
@@ -150,6 +157,13 @@ export async function PATCH(request: Request) {
       );
     }
 
+    if (!ALLOWED_STATUSES.has(status)) {
+      return NextResponse.json(
+        { error: 'Status tidak valid' },
+        { status: 400 }
+      );
+    }
+
     if (isSupabaseConfigured) {
       const admin = getAdminClient();
       if (!admin) {
@@ -159,9 +173,10 @@ export async function PATCH(request: Request) {
         );
       }
 
-      const { error } = await admin
+      const { data, error } = await admin
         .from('orders')
         .update({ status })
+        .select('id')
         .eq('id', orderId);
 
       if (error) {
@@ -169,6 +184,13 @@ export async function PATCH(request: Request) {
         return NextResponse.json(
           { error: 'Gagal memperbarui status' },
           { status: 500 }
+        );
+      }
+
+      if (!data || data.length === 0) {
+        return NextResponse.json(
+          { error: 'Pesanan tidak ditemukan' },
+          { status: 404 }
         );
       }
 

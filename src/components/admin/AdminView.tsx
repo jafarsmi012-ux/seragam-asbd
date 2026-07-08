@@ -268,6 +268,7 @@ function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       const res = await fetch('/api/admin/orders', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({
           orderId: selectedOrder.id,
           status: newStatus,
@@ -284,6 +285,12 @@ function AdminDashboard({ onLogout }: { onLogout: () => void }) {
         setStatusDialogOpen(false);
         setSelectedOrder(null);
         setNewStatus('');
+      } else {
+        toast({
+          title: 'Gagal memperbarui',
+          description: data.error || 'Terjadi kesalahan saat memperbarui status.',
+          variant: 'destructive',
+        });
       }
     } catch {
       toast({
